@@ -1,73 +1,74 @@
 pipeline {
     agent any
-    environment {
-        // Используем секреты из Jenkins Credentials
-        TELEGRAM_TOKEN = credentials('telegram-bot-token')
-        TELEGRAM_CHAT_ID = credentials('chat_id')
-        NGINX_PORT = "9889"  // Порт для Nginx
-    }
+    
     triggers {
-        //pollSCM('H/5 * * * *')  // Проверка изменений каждые 5 минут
         githubPush()
     }
+    
+    environment {
+        TELEGRAM_CHAT_ID = '967851087'
+        TELEGRAM_TOKEN = credentials('telegram-creds') // Настроить в Jenkins
+    }
+    
     stages {
-        // Этап 1: Запуск Nginx с вашим index.html
-        stage('Run Nginx') {
+        stage('Checkout') {
             steps {
-                sh '''
-                    docker run -d --name nginx-ci \
-                    -p ${NGINX_PORT}:80 \
-                    -v ${WORKSPACE}/index.html:/usr/share/nginx/html/index.html \
-                    cr.yandex/mirror/nginx
-                '''
+                checkout scm
             }
         }
-
-        // Этап 2: Проверка HTTP-ответа
-        stage('Check HTTP 200') {
+        
+        stage('Test Nginx') {
             steps {
-                sh '''
-                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${NGINX_PORT})
-                    [ "$STATUS" -eq 200 ] || { echo "❌ HTTP Status $STATUS (expected 200)"; exit 1; }
-                '''
-            }
-        }
-
-        // Этап 3: Проверка содержимого
-        stage('Verify MD5') {
-            steps {
-                sh '''
-                    LOCAL_MD5=$(md5sum index.html | awk "{print \$1}")
-                    REMOTE_MD5=$(curl -s http://localhost:${NGINX_PORT} | md5sum | awk "{print \$1}")
-                    [ "$LOCAL_MD5" == "$REMOTE_MD5" ] || { echo "❌ MD5 mismatch!"; exit 1; }
-                '''
+                script {
+                    docker.image('nginx:stable').withRun(
+                        "-p 9889:80 -v ${WORKSPACE}/index.html:/usr/share/nginx/html/index.html:ro"
+                    ) { container ->
+                        // Проверка HTTP 200
+                        sh "curl -I http://localhost:9889 | grep '200 OK'"
+                        
+                        // Проверка MD5
+                        def fileMd5 = sh(
+                            script: "md5sum index.html | awk '{print \$1}'", 
+                            returnStdout: true
+                        ).trim()
+                        
+                        def webMd5 = sh(
+                            script: "curl -s http://localhost:9889 | md5sum | awk '{print \$1}'", 
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (fileMd5 != webMd5) {
+                            error "MD5 mismatch! File: ${fileMd5}, Web: ${webMd5}"
+                        }
+                    }
+                }
             }
         }
     }
+    
     post {
-        // Всегда удаляем контейнер
         always {
-            sh 'docker stop nginx-ci || true'
-            sh 'docker rm nginx-ci || true'
-        }
-        // Уведомления в Telegram
-        success {
-            script {
-                sendTelegram("✅ CI Success: ${env.BUILD_URL}")
-            }
+            // Очистка контейнеров
+            sh 'docker ps -aq | xargs -r docker rm -f || true'
         }
         failure {
-            script {
-                sendTelegram("❌ CI Failed: ${env.BUILD_URL}")
-            }
+            // Telegram уведомление
+            sh """
+                curl -s -X POST \
+                "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="❌ CI Failed: ${JOB_NAME}%0A🔗 ${RUN_DISPLAY_URL}" \
+                -d parse_mode=HTML
+            """
+        }
+        success {
+            sh """
+                curl -s -X POST \
+                "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="✅ CI Success: ${JOB_NAME}%0A🔗 ${RUN_DISPLAY_URL}" \
+                -d parse_mode=HTML
+            """
         }
     }
-}
-
-// Функция для отправки в Telegram
-def sendTelegram(message) {
-    sh """
-        curl -s -X POST "https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage" \
-        -d "chat_id=${env.CHAT_ID}&text=${message}"
-    """
 }
