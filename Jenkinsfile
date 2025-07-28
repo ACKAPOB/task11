@@ -7,13 +7,18 @@ pipeline {
     
     environment {
         TELEGRAM_CHAT_ID = '967851087'
-        TELEGRAM_TOKEN = credentials('telegram-creds') // Настроить в Jenkins
+        TELEGRAM_TOKEN = credentials('telegram-creds')
     }
     
     stages {
         stage('Checkout') {
             steps {
-                checkout scm
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    extensions: [],
+                    userRemoteConfigs: [[url: 'https://github.com/ACKAPOB/task11']]
+                ])
             }
         }
         
@@ -48,11 +53,9 @@ pipeline {
     
     post {
         always {
-            // Очистка контейнеров
             sh 'docker ps -aq | xargs -r docker rm -f || true'
         }
         failure {
-            // Telegram уведомление
             sh """
                 curl -s -X POST \
                 "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
