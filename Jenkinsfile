@@ -1,10 +1,6 @@
 pipeline {
     agent any
     
-    triggers {
-        githubPush()
-    }
-    
     environment {
         TELEGRAM_CHAT_ID = '967851087'
         TELEGRAM_TOKEN = credentials('telegram-creds')
@@ -13,39 +9,44 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    extensions: [],
-                    userRemoteConfigs: [[url: 'https://github.com/ACKAPOB/task11']]
-                ])
+                checkout scm
             }
         }
         
         stage('Test Nginx') {
             steps {
                 script {
-                    docker.image('nginx:stable').withRun(
-                        "-p 9889:80 -v ${WORKSPACE}/index.html:/usr/share/nginx/html/index.html:ro"
-                    ) { container ->
-                        // Проверка HTTP 200
-                        sh "curl -I http://localhost:9889 | grep '200 OK'"
+                    // Проверка доступности Docker
+                    sh '''
+                        if ! command -v docker &> /dev/null; then
+                            echo "ERROR: Docker not found!"
+                            exit 1
+                        fi
+                        docker version
+                    '''
+                    
+                    // Запуск тестов
+                    sh '''
+                        docker run --rm -d -p 9889:80 \
+                          -v $(pwd)/index.html:/usr/share/nginx/html/index.html:ro \
+                          --name nginx-test nginx:stable
+                          
+                        sleep 5  # Даем Nginx время запуститься
                         
-                        // Проверка MD5
-                        def fileMd5 = sh(
-                            script: "md5sum index.html | awk '{print \$1}'", 
-                            returnStdout: true
-                        ).trim()
+                        # Проверка HTTP 200
+                        curl -I http://localhost:9889 | grep '200 OK'
                         
-                        def webMd5 = sh(
-                            script: "curl -s http://localhost:9889 | md5sum | awk '{print \$1}'", 
-                            returnStdout: true
-                        ).trim()
+                        # Проверка MD5
+                        FILE_MD5=$(md5sum index.html | awk '{print $1}')
+                        WEB_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
                         
-                        if (fileMd5 != webMd5) {
-                            error "MD5 mismatch! File: ${fileMd5}, Web: ${webMd5}"
-                        }
-                    }
+                        if [ "$FILE_MD5" != "$WEB_MD5" ]; then
+                            echo "MD5 mismatch! File: $FILE_MD5, Web: $WEB_MD5"
+                            exit 1
+                        fi
+                        
+                        docker stop nginx-test
+                    '''
                 }
             }
         }
@@ -56,22 +57,28 @@ pipeline {
             sh 'docker ps -aq | xargs -r docker rm -f || true'
         }
         failure {
-            sh """
-                curl -s -X POST \
-                "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                -d chat_id=${TELEGRAM_CHAT_ID} \
-                -d text="❌ CI Failed: ${JOB_NAME}%0A🔗 ${RUN_DISPLAY_URL}" \
-                -d parse_mode=HTML
-            """
+            script {
+                def message = "❌ CI Failed: ${JOB_NAME}\n🔗 ${RUN_DISPLAY_URL}"
+                sh """
+                    curl -s -X POST \
+                    "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="${message}" \
+                    -d parse_mode=HTML
+                """
+            }
         }
         success {
-            sh """
-                curl -s -X POST \
-                "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                -d chat_id=${TELEGRAM_CHAT_ID} \
-                -d text="✅ CI Success: ${JOB_NAME}%0A🔗 ${RUN_DISPLAY_URL}" \
-                -d parse_mode=HTML
-            """
+            script {
+                def message = "✅ CI Success: ${JOB_NAME}\n🔗 ${RUN_DISPLAY_URL}"
+                sh """
+                    curl -s -X POST \
+                    "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="${message}" \
+                    -d parse_mode=HTML
+                """
+            }
         }
     }
 }
