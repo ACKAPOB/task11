@@ -7,7 +7,8 @@ pipeline {
         NGINX_PORT = "9889"  // Порт для Nginx
     }
     triggers {
-        pollSCM('H/5 * * * *')  // Проверка изменений каждые 5 минут
+        //pollSCM('H/5 * * * *')  // Проверка изменений каждые 5 минут
+        githubPush()
     }
     stages {
         // Этап 1: Запуск Nginx с вашим index.html
