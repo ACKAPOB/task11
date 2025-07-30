@@ -1,105 +1,50 @@
 pipeline {
-    agent any
-    
-    environment {
-        DOCKER_HOST = "unix:///var/run/docker.sock"
-    }
-    
+    agent { label 'master' } // Или ваш агент, если он не master
+
     stages {
+        stage('Declarative: Checkout SCM') {
+            steps {
+                // Этот шаг уже есть, он не всегда явно нужен в Declarative Pipeline,
+                // так как Jenkinsfile сам по себе извлекается из SCM.
+                // Но если вы хотите гарантировать, что рабочая директория будет очищена,
+                // можно добавить: cleanWs()
+            }
+        }
+
         stage('Checkout') {
             steps {
+                // Если вы используете один и тот же репозиторий, этот второй checkout
+                // обычно избыточен, так как содержимое уже есть в workspace
+                // после 'Declarative: Checkout SCM'.
+                // Однако, если это было сделано намеренно для какой-то специфики,
+                // оставьте его.
                 checkout scm
             }
         }
-        
-        stage('Prepare Nginx') {
+
+        stage('Prepare Workspace') {
             steps {
                 sh '''
-                    echo "### Подготовка Nginx ###"
-                    # Создаем структуру каталогов
-                    mkdir -p nginx-setup/conf
-                    mkdir -p nginx-setup/html
-                    
-                    # Копируем наш index.html
-                    cp index.html nginx-setup/html/
-                    
-                    # Создаем конфигурацию Nginx с явным указанием порта 9889
-                    echo 'worker_processes auto;
-                    events {
-                        worker_connections 1024;
-                    }
-                    http {
-                        server {
-                            listen 9889;
-                            root /usr/share/nginx/html;
-                            location / {
-                                index index.html;
-                            }
-                        }
-                    }' > nginx-setup/conf/nginx.conf
-                    
-                    # Проверяем созданные файлы
-                    echo "### Проверка созданных файлов ###"
-                    ls -la nginx-setup/
-                    ls -la nginx-setup/conf/
-                    cat nginx-setup/conf/nginx.conf
-                    ls -la nginx-setup/html/
+                    echo "### Подготовка workspace ###"
+                    mkdir -p nginx-content
+                    cp index.html nginx-content/
+                    chmod -R a+rx nginx-content
+                    echo "### Содержимое index.html ###"
+                    cat nginx-content/index.html
                 '''
             }
         }
-        
-        stage('Run and Test') {
+
+        stage('Test Nginx') {
             steps {
                 script {
-                    try {
-                        sh '''
-                            echo "### Запуск Nginx ###"
-                            docker run -d \
-                              --network host \
-                              -v $WORKSPACE/nginx-setup/html:/usr/share/nginx/html:ro \
-                              -v $WORKSPACE/nginx-setup/conf/nginx.conf:/etc/nginx/nginx.conf:ro \
-                              --name nginx-test \
-                              nginx:stable
-                            
-                            echo "### Ждем запуска ###"
-                            sleep 5
-                            
-                            echo "### Проверка состояния контейнера ###"
-                            docker ps -a | grep nginx-test
-                            
-                            echo "### Проверка логов ###"
-                            docker logs nginx-test || true
-                            
-                            echo "### Проверка доступности ###"
-                            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
-                            echo "HTTP Code: $HTTP_CODE"
-                            
-                            if [ "$HTTP_CODE" != "200" ]; then
-                                echo "### Детальная диагностика ###"
-                                docker exec nginx-test ps aux || true
-                                docker exec nginx-test cat /etc/nginx/nginx.conf || true
-                                exit 1
-                            fi
-                            
-                            echo "### Проверка содержимого ###"
-                            curl -s http://localhost:9889 | grep "Версия 1.0" || exit 1
-                        '''
-                    } finally {
-                        sh '''
-                            echo "### Очистка ###"
-                            docker stop nginx-test || true
-                            docker rm nginx-test || true
-                            rm -rf nginx-setup || true
-                        '''
-                    }
-                }
-            }
-        }
-    }
-    
-    post {
-        always {
-            echo "### Build status: ${currentBuild.result ?: 'SUCCESS'} ###"
-        }
-    }
-}
+                    echo "### Запуск Nginx в сетевом режиме host ###"
+                    // Добавим --rm, чтобы контейнер автоматически удалялся после остановки
+                    // (но мы все равно будем останавливать его явно в post-build)
+                    sh "docker run -d --network host -v ${workspace}/nginx-content:/usr/share/nginx/html:ro --name nginx-test nginx:stable"
+
+                    echo "### Проверка состояния контейнера (сразу после запуска) ###"
+                    sh "docker ps -a | grep nginx-test"
+
+                    echo "### Ждем немного, пока Nginx полностью стартует... ###"
+                    sleep 10 // Увеличил время ожидания, чтобы Nginx успел запуститься
