@@ -23,9 +23,8 @@ pipeline {
                     # Копируем наш index.html
                     cp index.html nginx-setup/html/
                     
-                    # Создаем полную конфигурацию Nginx
-                    cat > nginx-setup/conf/nginx.conf << 'EOF'
-                    worker_processes auto;
+                    # Создаем конфигурацию Nginx с явным указанием порта 9889
+                    echo 'worker_processes auto;
                     events {
                         worker_connections 1024;
                     }
@@ -37,12 +36,13 @@ pipeline {
                                 index index.html;
                             }
                         }
-                    }
-                    EOF
+                    }' > nginx-setup/conf/nginx.conf
                     
                     # Проверяем созданные файлы
+                    echo "### Проверка созданных файлов ###"
                     ls -la nginx-setup/
                     ls -la nginx-setup/conf/
+                    cat nginx-setup/conf/nginx.conf
                     ls -la nginx-setup/html/
                 '''
             }
@@ -57,18 +57,18 @@ pipeline {
                             docker run -d \
                               --network host \
                               -v $WORKSPACE/nginx-setup/html:/usr/share/nginx/html:ro \
-                              -v $WORKSPACE/nginx-setup/conf:/etc/nginx:ro \
+                              -v $WORKSPACE/nginx-setup/conf/nginx.conf:/etc/nginx/nginx.conf:ro \
                               --name nginx-test \
                               nginx:stable
                             
                             echo "### Ждем запуска ###"
                             sleep 5
                             
-                            echo "### Проверка конфигурации ###"
-                            docker exec nginx-test nginx -T
+                            echo "### Проверка состояния контейнера ###"
+                            docker ps -a | grep nginx-test
                             
-                            echo "### Проверка процессов ###"
-                            docker exec nginx-test ps aux | grep nginx
+                            echo "### Проверка логов ###"
+                            docker logs nginx-test || true
                             
                             echo "### Проверка доступности ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
@@ -76,8 +76,8 @@ pipeline {
                             
                             if [ "$HTTP_CODE" != "200" ]; then
                                 echo "### Детальная диагностика ###"
-                                docker exec nginx-test netstat -tulnp || docker exec nginx-test ss -tulnp
-                                docker logs nginx-test
+                                docker exec nginx-test ps aux || true
+                                docker exec nginx-test cat /etc/nginx/nginx.conf || true
                                 exit 1
                             fi
                             
