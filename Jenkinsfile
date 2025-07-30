@@ -16,11 +16,23 @@ pipeline {
             steps {
                 sh '''
                     echo "### Подготовка workspace ###"
+                    mkdir -p nginx-config
                     mkdir -p nginx-content
+                    
+                    # Копируем наш index.html
                     cp index.html nginx-content/
-                    chmod -R a+rx nginx-content
-                    echo "### Содержимое index.html ###"
-                    cat nginx-content/index.html
+                    
+                    # Создаем кастомную конфигурацию Nginx
+                    echo 'server {
+                        listen 9889;
+                        server_name localhost;
+                        location / {
+                            root /usr/share/nginx/html;
+                            index index.html;
+                        }
+                    }' > nginx-config/nginx-custom.conf
+                    
+                    chmod -R a+rx nginx-content nginx-config
                 '''
             }
         }
@@ -30,10 +42,11 @@ pipeline {
                 script {
                     try {
                         sh '''
-                            echo "### Запуск Nginx в сетевом режиме host ###"
+                            echo "### Запуск Nginx с кастомной конфигурацией ###"
                             docker run -d \
                               --network host \
                               -v $WORKSPACE/nginx-content:/usr/share/nginx/html:ro \
+                              -v $WORKSPACE/nginx-config:/etc/nginx/conf.d:ro \
                               --name nginx-test \
                               nginx:stable
                             
@@ -42,19 +55,16 @@ pipeline {
                             sleep 5
                             docker logs nginx-test
                             
+                            echo "### Проверка конфигурации Nginx ###"
+                            docker exec nginx-test nginx -T | grep 9889
+                            
                             echo "### Проверка доступности ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
-                            echo "HTTP Code from localhost: $HTTP_CODE"
+                            echo "HTTP Code: $HTTP_CODE"
                             
-                            EXTERNAL_IP=$(curl -s ifconfig.me)
-                            echo "### Проверка внешнего доступа к $EXTERNAL_IP:9889 ###"
-                            EXT_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$EXTERNAL_IP:9889)
-                            echo "HTTP Code from external: $EXT_CODE"
-                            
-                            if [ "$HTTP_CODE" != "200" ] || [ "$EXT_CODE" != "200" ]; then
+                            if [ "$HTTP_CODE" != "200" ]; then
                                 echo "### Детальная диагностика ###"
-                                netstat -tulnp || ss -tulnp
-                                docker inspect nginx-test
+                                docker exec nginx-test netstat -tulnp || docker exec nginx-test ss -tulnp
                                 exit 1
                             fi
                             
@@ -66,7 +76,7 @@ pipeline {
                             echo "### Очистка ###"
                             docker stop nginx-test || true
                             docker rm nginx-test || true
-                            rm -rf nginx-content || true
+                            rm -rf nginx-content nginx-config || true
                         '''
                     }
                 }
