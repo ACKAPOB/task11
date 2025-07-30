@@ -3,7 +3,6 @@ pipeline {
     
     environment {
         DOCKER_HOST = "unix:///var/run/docker.sock"
-        DOCKER_CLI_EXPERIMENTAL = "enabled"
     }
     
     stages {
@@ -11,7 +10,6 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        # Явная проверка Docker
                         docker --version
                         docker info
                         ls -la /var/run/docker.sock
@@ -20,16 +18,26 @@ pipeline {
             }
         }
         
+        stage('Prepare Workspace') {
+            steps {
+                sh '''
+                    # Создаем директорию для nginx
+                    mkdir -p nginx-content
+                    cp index.html nginx-content/
+                    chmod -R a+rwx nginx-content
+                '''
+            }
+        }
+        
         stage('Test Nginx') {
             steps {
                 script {
                     try {
                         sh '''
-                            # Явное указание пути к docker.sock
+                            # Запускаем Nginx с правильными путями
                             docker run --rm -d \
-                              -v /var/run/docker.sock:/var/run/docker.sock \
                               -p 9889:80 \
-                              -v ${WORKSPACE}/index.html:/usr/share/nginx/html/index.html:ro \
+                              -v ${WORKSPACE}/nginx-content:/usr/share/nginx/html:ro \
                               --name nginx-test \
                               nginx:stable
                             
@@ -43,7 +51,7 @@ pipeline {
                             fi
                             
                             # Проверка MD5
-                            FILE_MD5=$(md5sum index.html | awk '{print $1}')
+                            FILE_MD5=$(md5sum nginx-content/index.html | awk '{print $1}')
                             WEB_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
                             
                             if [ "$FILE_MD5" != "$WEB_MD5" ]; then
@@ -63,6 +71,7 @@ pipeline {
     post {
         always {
             echo "Build status: ${currentBuild.result ?: 'SUCCESS'}"
+            sh 'rm -rf nginx-content || true'
         }
     }
 }
