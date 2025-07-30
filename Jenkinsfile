@@ -22,27 +22,23 @@ pipeline {
                     # Копируем наш index.html
                     cp index.html nginx-setup/html/
                     
-                    # Создаем конфигурацию Nginx
-                    cat > nginx-setup/conf/nginx.conf << 'EOF'
-worker_processes auto;
-events {
-    worker_connections 1024;
-}
-http {
-    server {
-        listen 9889;
-        root /usr/share/nginx/html;
-        location / {
-            index index.html;
-        }
-    }
-}
-EOF
+                    # Создаем конфигурацию Nginx простым echo
+                    echo 'worker_processes auto;
+                    events {
+                        worker_connections 1024;
+                    }
+                    http {
+                        server {
+                            listen 9889;
+                            root /usr/share/nginx/html;
+                            location / {
+                                index index.html;
+                            }
+                        }
+                    }' > nginx-setup/conf/nginx.conf
                     
                     # Проверяем созданные файлы
-                    ls -la nginx-setup/
-                    ls -la nginx-setup/conf/
-                    ls -la nginx-setup/html/
+                    echo "### Содержимое конфига ###"
                     cat nginx-setup/conf/nginx.conf
                 '''
             }
@@ -65,26 +61,35 @@ EOF
                             sleep 5
                             
                             # Проверка состояния
+                            echo "### Состояние контейнера ###"
                             docker ps -a | grep nginx-test
-                            docker logs nginx-test || true
+                            
+                            # Проверка логов
+                            echo "### Логи Nginx ###"
+                            docker logs nginx-test
                             
                             # Проверка доступности
+                            echo "### Проверка HTTP ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
                             echo "HTTP Status Code: $HTTP_CODE"
                             
                             if [ "$HTTP_CODE" != "200" ]; then
                                 echo "### Дополнительная диагностика ###"
-                                docker exec nginx-test ps aux || true
-                                docker exec nginx-test cat /etc/nginx/nginx.conf || true
+                                echo "Процессы в контейнере:"
+                                docker exec nginx-test ps aux
+                                echo "Конфигурация Nginx:"
+                                docker exec nginx-test cat /etc/nginx/nginx.conf
                                 exit 1
                             fi
                             
                             # Проверка содержимого
+                            echo "### Проверка контента ###"
                             curl -s http://localhost:9889 | grep "Версия 1.0" || exit 1
                         '''
                     } finally {
                         sh '''
                             # Очистка
+                            echo "### Очистка окружения ###"
                             docker stop nginx-test || true
                             docker rm nginx-test || true
                             rm -rf nginx-setup || true
@@ -97,7 +102,7 @@ EOF
     
     post {
         always {
-            echo "Build status: ${currentBuild.result ?: 'SUCCESS'}"
+            echo "### Итоговый статус: ${currentBuild.result ?: 'SUCCESS'} ###"
         }
     }
 }
