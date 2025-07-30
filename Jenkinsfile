@@ -12,13 +12,14 @@ pipeline {
             }
         }
         
-        stage('Verify Files') {
+        stage('Prepare Workspace') {
             steps {
                 sh '''
-                    echo "### Проверка файлов ###"
-                    ls -la $WORKSPACE/
-                    ls -la $WORKSPACE/index.html
-                    chmod a+r $WORKSPACE/index.html
+                    echo "### Подготовка workspace ###"
+                    mkdir -p nginx-content
+                    cp index.html nginx-content/
+                    chmod -R a+rx nginx-content
+                    ls -la nginx-content/
                 '''
             }
         }
@@ -31,7 +32,7 @@ pipeline {
                             echo "### Запуск Nginx ###"
                             docker run -d \
                               -p 9889:80 \
-                              -v $WORKSPACE/index.html:/usr/share/nginx/html/index.html:ro \
+                              -v $WORKSPACE/nginx-content:/usr/share/nginx/html:ro \
                               --name nginx-test \
                               nginx:stable
                             
@@ -58,6 +59,7 @@ pipeline {
                             echo "### Очистка ###"
                             docker stop nginx-test || true
                             docker rm nginx-test || true
+                            rm -rf nginx-content || true
                         '''
                     }
                 }
