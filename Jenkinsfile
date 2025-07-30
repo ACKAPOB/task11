@@ -15,7 +15,6 @@ pipeline {
         stage('Prepare Nginx') {
             steps {
                 sh '''
-                    echo "### Подготовка Nginx ###"
                     # Создаем структуру каталогов
                     mkdir -p nginx-setup/conf
                     mkdir -p nginx-setup/html
@@ -23,27 +22,28 @@ pipeline {
                     # Копируем наш index.html
                     cp index.html nginx-setup/html/
                     
-                    # Создаем конфигурацию Nginx с явным указанием порта 9889
-                    echo 'worker_processes auto;
-                    events {
-                        worker_connections 1024;
-                    }
-                    http {
-                        server {
-                            listen 9889;
-                            root /usr/share/nginx/html;
-                            location / {
-                                index index.html;
-                            }
-                        }
-                    }' > nginx-setup/conf/nginx.conf
+                    # Создаем конфигурацию Nginx
+                    cat > nginx-setup/conf/nginx.conf << 'EOF'
+worker_processes auto;
+events {
+    worker_connections 1024;
+}
+http {
+    server {
+        listen 9889;
+        root /usr/share/nginx/html;
+        location / {
+            index index.html;
+        }
+    }
+}
+EOF
                     
                     # Проверяем созданные файлы
-                    echo "### Проверка созданных файлов ###"
                     ls -la nginx-setup/
                     ls -la nginx-setup/conf/
-                    cat nginx-setup/conf/nginx.conf
                     ls -la nginx-setup/html/
+                    cat nginx-setup/conf/nginx.conf
                 '''
             }
         }
@@ -53,7 +53,7 @@ pipeline {
                 script {
                     try {
                         sh '''
-                            echo "### Запуск Nginx ###"
+                            # Запуск Nginx
                             docker run -d \
                               --network host \
                               -v $WORKSPACE/nginx-setup/html:/usr/share/nginx/html:ro \
@@ -61,32 +61,30 @@ pipeline {
                               --name nginx-test \
                               nginx:stable
                             
-                            echo "### Ждем запуска ###"
+                            # Даем время на запуск
                             sleep 5
                             
-                            echo "### Проверка состояния контейнера ###"
+                            # Проверка состояния
                             docker ps -a | grep nginx-test
-                            
-                            echo "### Проверка логов ###"
                             docker logs nginx-test || true
                             
-                            echo "### Проверка доступности ###"
+                            # Проверка доступности
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
-                            echo "HTTP Code: $HTTP_CODE"
+                            echo "HTTP Status Code: $HTTP_CODE"
                             
                             if [ "$HTTP_CODE" != "200" ]; then
-                                echo "### Детальная диагностика ###"
+                                echo "### Дополнительная диагностика ###"
                                 docker exec nginx-test ps aux || true
                                 docker exec nginx-test cat /etc/nginx/nginx.conf || true
                                 exit 1
                             fi
                             
-                            echo "### Проверка содержимого ###"
+                            # Проверка содержимого
                             curl -s http://localhost:9889 | grep "Версия 1.0" || exit 1
                         '''
                     } finally {
                         sh '''
-                            echo "### Очистка ###"
+                            # Очистка
                             docker stop nginx-test || true
                             docker rm nginx-test || true
                             rm -rf nginx-setup || true
@@ -99,7 +97,7 @@ pipeline {
     
     post {
         always {
-            echo "### Build status: ${currentBuild.result ?: 'SUCCESS'} ###"
+            echo "Build status: ${currentBuild.result ?: 'SUCCESS'}"
         }
     }
 }
