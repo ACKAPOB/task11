@@ -12,59 +12,63 @@ pipeline {
             }
         }
         
-        stage('Prepare Workspace') {
+        stage('Prepare Nginx') {
             steps {
                 sh '''
-                    echo "### Подготовка workspace ###"
-                    mkdir -p nginx-config
+                    echo "### Подготовка Nginx ###"
                     mkdir -p nginx-content
-                    
-                    # Копируем наш index.html
                     cp index.html nginx-content/
                     
-                    # Создаем кастомную конфигурацию Nginx
-                    echo 'server {
-                        listen 9889;
-                        server_name localhost;
-                        location / {
-                            root /usr/share/nginx/html;
-                            index index.html;
+                    # Создаем полную конфигурацию Nginx
+                    cat > nginx-content/nginx.conf << 'EOF'
+                    events {
+                        worker_connections 1024;
+                    }
+                    http {
+                        server {
+                            listen 9889;
+                            location / {
+                                root /usr/share/nginx/html;
+                                index index.html;
+                            }
                         }
-                    }' > nginx-config/nginx-custom.conf
+                    }
+                    EOF
                     
-                    chmod -R a+rx nginx-content nginx-config
+                    chmod -R a+r nginx-content
                 '''
             }
         }
         
-        stage('Test Nginx') {
+        stage('Run and Test') {
             steps {
                 script {
                     try {
                         sh '''
-                            echo "### Запуск Nginx с кастомной конфигурацией ###"
+                            echo "### Запуск Nginx ###"
                             docker run -d \
                               --network host \
                               -v $WORKSPACE/nginx-content:/usr/share/nginx/html:ro \
-                              -v $WORKSPACE/nginx-config:/etc/nginx/conf.d:ro \
+                              -v $WORKSPACE/nginx-content/nginx.conf:/etc/nginx/nginx.conf:ro \
                               --name nginx-test \
                               nginx:stable
                             
-                            echo "### Проверка состояния контейнера ###"
-                            docker ps -a | grep nginx-test
+                            echo "### Ждем запуска ###"
                             sleep 5
-                            docker logs nginx-test
                             
-                            echo "### Проверка конфигурации Nginx ###"
-                            docker exec nginx-test nginx -T | grep 9889
+                            echo "### Проверка конфигурации ###"
+                            docker exec nginx-test nginx -T
+                            
+                            echo "### Проверка портов ###"
+                            docker exec nginx-test netstat -tulnp || docker exec nginx-test ss -tulnp
                             
                             echo "### Проверка доступности ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
                             echo "HTTP Code: $HTTP_CODE"
                             
                             if [ "$HTTP_CODE" != "200" ]; then
-                                echo "### Детальная диагностика ###"
-                                docker exec nginx-test netstat -tulnp || docker exec nginx-test ss -tulnp
+                                echo "### Логи Nginx ###"
+                                docker logs nginx-test
                                 exit 1
                             fi
                             
@@ -76,7 +80,7 @@ pipeline {
                             echo "### Очистка ###"
                             docker stop nginx-test || true
                             docker rm nginx-test || true
-                            rm -rf nginx-content nginx-config || true
+                            rm -rf nginx-content || true
                         '''
                     }
                 }
