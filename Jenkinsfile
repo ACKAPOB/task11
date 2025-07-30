@@ -19,7 +19,8 @@ pipeline {
                     mkdir -p nginx-content
                     cp index.html nginx-content/
                     chmod -R a+rx nginx-content
-                    ls -la nginx-content/
+                    echo "### Содержимое index.html ###"
+                    cat nginx-content/index.html
                 '''
             }
         }
@@ -29,25 +30,31 @@ pipeline {
                 script {
                     try {
                         sh '''
-                            echo "### Запуск Nginx ###"
+                            echo "### Запуск Nginx в сетевом режиме host ###"
                             docker run -d \
-                              -p 9889:80 \
+                              --network host \
                               -v $WORKSPACE/nginx-content:/usr/share/nginx/html:ro \
                               --name nginx-test \
                               nginx:stable
                             
+                            echo "### Проверка состояния контейнера ###"
+                            docker ps -a | grep nginx-test
                             sleep 5
-                        '''
-                        
-                        sh '''
+                            docker logs nginx-test
+                            
                             echo "### Проверка доступности ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
-                            echo "HTTP Code: $HTTP_CODE"
+                            echo "HTTP Code from localhost: $HTTP_CODE"
                             
-                            if [ "$HTTP_CODE" != "200" ]; then
-                                echo "### Дополнительная диагностика ###"
-                                docker ps -a
-                                docker logs nginx-test
+                            EXTERNAL_IP=$(curl -s ifconfig.me)
+                            echo "### Проверка внешнего доступа к $EXTERNAL_IP:9889 ###"
+                            EXT_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$EXTERNAL_IP:9889)
+                            echo "HTTP Code from external: $EXT_CODE"
+                            
+                            if [ "$HTTP_CODE" != "200" ] || [ "$EXT_CODE" != "200" ]; then
+                                echo "### Детальная диагностика ###"
+                                netstat -tulnp || ss -tulnp
+                                docker inspect nginx-test
                                 exit 1
                             fi
                             
