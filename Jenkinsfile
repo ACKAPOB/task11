@@ -5,14 +5,14 @@ pipeline {
         stage('Run Nginx') {
             steps {
                 sh '''
-                    # 1. Создаем структуру для volume
-                    mkdir -p nginx-data/html
-                    echo "<h1>Nginx with Volumes</h1>" > nginx-data/html/index.html
+                    # 1. Создаем директорию для проекта на хосте
+                    mkdir -p $WORKSPACE/nginx-content
+                    echo "<h1>Hello from Nginx</h1>" > $WORKSPACE/nginx-content/index.html
 
-                    # 2. Запускаем контейнер ТОЛЬКО с volume (без проброса портов)
+                    # 2. Запускаем контейнер с volume (bind mount)
                     docker run -d \
                         --name nginx-vol \
-                        -v $(pwd)/nginx-data/html:/usr/share/nginx/html:ro \
+                        -v $WORKSPACE/nginx-content:/usr/share/nginx/html:ro \
                         nginx:alpine
                 '''
             }
