@@ -16,26 +16,34 @@ pipeline {
             steps {
                 sh '''
                     echo "### Подготовка Nginx ###"
-                    mkdir -p nginx-content
-                    cp index.html nginx-content/
+                    # Создаем структуру каталогов
+                    mkdir -p nginx-setup/conf
+                    mkdir -p nginx-setup/html
+                    
+                    # Копируем наш index.html
+                    cp index.html nginx-setup/html/
                     
                     # Создаем полную конфигурацию Nginx
-                    cat > nginx-content/nginx.conf << 'EOF'
+                    cat > nginx-setup/conf/nginx.conf << 'EOF'
+                    worker_processes auto;
                     events {
                         worker_connections 1024;
                     }
                     http {
                         server {
                             listen 9889;
+                            root /usr/share/nginx/html;
                             location / {
-                                root /usr/share/nginx/html;
                                 index index.html;
                             }
                         }
                     }
                     EOF
                     
-                    chmod -R a+r nginx-content
+                    # Проверяем созданные файлы
+                    ls -la nginx-setup/
+                    ls -la nginx-setup/conf/
+                    ls -la nginx-setup/html/
                 '''
             }
         }
@@ -48,8 +56,8 @@ pipeline {
                             echo "### Запуск Nginx ###"
                             docker run -d \
                               --network host \
-                              -v $WORKSPACE/nginx-content:/usr/share/nginx/html:ro \
-                              -v $WORKSPACE/nginx-content/nginx.conf:/etc/nginx/nginx.conf:ro \
+                              -v $WORKSPACE/nginx-setup/html:/usr/share/nginx/html:ro \
+                              -v $WORKSPACE/nginx-setup/conf:/etc/nginx:ro \
                               --name nginx-test \
                               nginx:stable
                             
@@ -59,15 +67,16 @@ pipeline {
                             echo "### Проверка конфигурации ###"
                             docker exec nginx-test nginx -T
                             
-                            echo "### Проверка портов ###"
-                            docker exec nginx-test netstat -tulnp || docker exec nginx-test ss -tulnp
+                            echo "### Проверка процессов ###"
+                            docker exec nginx-test ps aux | grep nginx
                             
                             echo "### Проверка доступности ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
                             echo "HTTP Code: $HTTP_CODE"
                             
                             if [ "$HTTP_CODE" != "200" ]; then
-                                echo "### Логи Nginx ###"
+                                echo "### Детальная диагностика ###"
+                                docker exec nginx-test netstat -tulnp || docker exec nginx-test ss -tulnp
                                 docker logs nginx-test
                                 exit 1
                             fi
@@ -80,7 +89,7 @@ pipeline {
                             echo "### Очистка ###"
                             docker stop nginx-test || true
                             docker rm nginx-test || true
-                            rm -rf nginx-content || true
+                            rm -rf nginx-setup || true
                         '''
                     }
                 }
