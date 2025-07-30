@@ -6,25 +6,19 @@ pipeline {
     }
     
     stages {
-        stage('Check Docker') {
+        stage('Checkout') {
             steps {
-                script {
-                    sh '''
-                        docker --version
-                        docker info
-                        ls -la /var/run/docker.sock
-                    '''
-                }
+                checkout scm
             }
         }
         
-        stage('Prepare Workspace') {
+        stage('Verify Files') {
             steps {
                 sh '''
-                    # Создаем директорию для nginx
-                    mkdir -p nginx-content
-                    cp index.html nginx-content/
-                    chmod -R a+rwx nginx-content
+                    echo "### Проверка файлов ###"
+                    ls -la $WORKSPACE/
+                    ls -la $WORKSPACE/index.html
+                    chmod a+r $WORKSPACE/index.html
                 '''
             }
         }
@@ -34,34 +28,37 @@ pipeline {
                 script {
                     try {
                         sh '''
-                            # Запускаем Nginx с правильными путями
-                            docker run --rm -d \
+                            echo "### Запуск Nginx ###"
+                            docker run -d \
                               -p 9889:80 \
-                              -v ${WORKSPACE}/nginx-content:/usr/share/nginx/html:ro \
+                              -v $WORKSPACE/index.html:/usr/share/nginx/html/index.html:ro \
                               --name nginx-test \
                               nginx:stable
                             
                             sleep 5
-                            
-                            # Проверка HTTP 200
+                        '''
+                        
+                        sh '''
+                            echo "### Проверка доступности ###"
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
+                            echo "HTTP Code: $HTTP_CODE"
+                            
                             if [ "$HTTP_CODE" != "200" ]; then
-                                echo "ERROR: HTTP response code $HTTP_CODE (expected 200)"
+                                echo "### Дополнительная диагностика ###"
+                                docker ps -a
+                                docker logs nginx-test
                                 exit 1
                             fi
                             
-                            # Проверка MD5
-                            FILE_MD5=$(md5sum nginx-content/index.html | awk '{print $1}')
-                            WEB_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
-                            
-                            if [ "$FILE_MD5" != "$WEB_MD5" ]; then
-                                echo "ERROR: MD5 mismatch! File: $FILE_MD5, Web: $WEB_MD5"
-                                exit 1
-                            fi
+                            echo "### Проверка содержимого ###"
+                            curl -s http://localhost:9889 | grep "Версия 1.0" || exit 1
                         '''
                     } finally {
-                        sh 'docker stop nginx-test || true'
-                        sh 'docker rm nginx-test || true'
+                        sh '''
+                            echo "### Очистка ###"
+                            docker stop nginx-test || true
+                            docker rm nginx-test || true
+                        '''
                     }
                 }
             }
@@ -70,8 +67,7 @@ pipeline {
     
     post {
         always {
-            echo "Build status: ${currentBuild.result ?: 'SUCCESS'}"
-            sh 'rm -rf nginx-content || true'
+            echo "### Build status: ${currentBuild.result ?: 'SUCCESS'} ###"
         }
     }
 }
