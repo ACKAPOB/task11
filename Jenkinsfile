@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         TELEGRAM_CHAT_ID = '967851087'
-        TELEGRAM_TOKEN = credentials('telegram-creds')
+        //TELEGRAM_TOKEN = credentials('telegram-creds')
     }
     
     stages {
