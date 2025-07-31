@@ -2,23 +2,27 @@ pipeline {
     agent any
 
     stages {
-        stage('Checkout & Prepare') {
+        stage('Checkout') {
             steps {
-                checkout scm  // Клонирует репозиторий
+                checkout scm
             }
         }
 
-        stage('Run Nginx') {
+        stage('Prepare & Run Nginx') {
             steps {
                 sh '''
-                    # Запускаем Nginx с пробросом портов
+                    # 1. Создаем директорию и копируем index.html
+                    mkdir -p $WORKSPACE/nginx-html
+                    cp $WORKSPACE/index.html $WORKSPACE/nginx-html/
+
+                    # 2. Запускаем Nginx с монтированием ДИРЕКТОРИИ (не файла!)
                     docker run -d \
                         --name nginx_ci \
-                        -v $WORKSPACE/index.html:/usr/share/nginx/html/index.html:ro \
+                        -v $WORKSPACE/nginx-html:/usr/share/nginx/html:ro \
                         -p 9889:80 \
                         nginx:alpine
-                    
-                    sleep 3  // Ждем запуска
+
+                    sleep 3  # Ждем запуска
                 '''
             }
         }
@@ -31,7 +35,7 @@ pipeline {
                         echo "❌ Ошибка: Nginx вернул код $HTTP_CODE вместо 200"
                         exit 1
                     else
-                        echo "✅ HTTP-200: Страница доступна"
+                        echo "✅ HTTP-200: OK"
                     fi
                 '''
             }
@@ -40,7 +44,7 @@ pipeline {
         stage('Test MD5') {
             steps {
                 sh '''
-                    LOCAL_MD5=$(md5sum index.html | awk '{print $1}')
+                    LOCAL_MD5=$(md5sum $WORKSPACE/nginx-html/index.html | awk '{print $1}')
                     REMOTE_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
 
                     if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
@@ -56,11 +60,12 @@ pipeline {
 
     post {
         always {
-            sh 'docker rm -f nginx_ci || true'  // Удаляем контейнер
+            sh 'docker rm -f nginx_ci || true'
+            sh 'rm -rf $WORKSPACE/nginx-html'
         }
         failure {
-            // Здесь можно добавить уведомление в Slack/Telegram
-            echo "🚨 CI Failed! Проверьте изменения в index.html"
+            echo "🚨 CI Failed! Подробности в логах."
+            // Добавьте здесь уведомление в Telegram/Slack (как в прошлом примере)
         }
     }
 }
